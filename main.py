@@ -1,12 +1,12 @@
-import re
-
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from typing import List, Optional, Any, Dict
-from pymongo import MongoClient
 from bson import ObjectId
+
+import models
+from helpers import get_all_variables, validate_all_formulas, eval_formula
+from settings import db
 
 app = FastAPI()
 
@@ -23,107 +23,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = MongoClient("mongodb://127.0.0.1:27017/")
-db = client["calculator_db"]
-
-
-class Calculator(BaseModel):
-    name: str
-
-
-class Variable(BaseModel):
-    calculator_id: str
-    tag_name: str
-    name: str
-    description: Optional[str] = None
-    data_type: str
-    default_value: Any
-    choices: Optional[List[Any]] = None
-    order: int
-    widget: Optional[str] = None
-    formula: Optional[str] = None
-    is_output: bool = False
-    required: bool = False
-
-
-class Price(BaseModel):
-    calculator_id: str
-    tag_name: str
-    price: float
-    extra: Optional[Dict[str, Any]] = None
-    description: Optional[str] = None
-    order: int
-
-
-class Template(BaseModel):
-    calculator_id: str
-    html: str
-
-
-def get_price(tag_name: str, context: Dict[str, Any], prices: List[Dict[str, Any]], fallback_value=0.0):
-    value = fallback_value
-    for price in prices:
-        if price['tag_name'] == tag_name:
-            if check_extra_conditions(price.get("extra", {}), context):
-                value = price['price']
-    return value
-
-
-def eval_formula(formula: str, context: Dict[str, Any], prices: List[Dict[str, Any]]) -> Any:
-    formula = formula.replace("if", "np.where").replace(";", ",")
-
-    def price(tag_name: str, fallback_value=0.0):
-        return get_price(tag_name, context, prices, fallback_value)
-
-    for key, value in context.items():
-        pattern = r'\b' + re.escape(key) + r'\b'
-        formula = re.sub(pattern, str(value), formula)
-
-    try:
-        local_context = {"np": np, "price": price}
-        return eval(formula, {}, local_context)
-    except Exception as e:
-        print(f"Error evaluating formula: {formula} with context {context} - {e}")
-        return
-
-
-def check_extra_conditions(extra: Dict[str, Any], context: Dict[str, Any]) -> bool:
-    if not extra:
-        return True
-    for key, value in extra.items():
-        if key.endswith("__gte"):
-            actual_key = key[:-5]
-            if actual_key in context and context[actual_key] < value:
-                return False
-        elif key.endswith("__lte"):
-            actual_key = key[:-5]
-            if actual_key in context and context[actual_key] > value:
-                return False
-        elif key.endswith("__gt"):
-            actual_key = key[:-4]
-            if actual_key in context and context[actual_key] <= value:
-                return False
-        elif key.endswith("__lt"):
-            actual_key = key[:-4]
-            if actual_key in context and context[actual_key] >= value:
-                return False
-        elif key.endswith("__eq"):
-            actual_key = key[:-4]
-            if actual_key in context and context[actual_key] != value:
-                return False
-        elif key.endswith("__ne"):
-            actual_key = key[:-4]
-            if actual_key in context and context[actual_key] == value:
-                return False
-        elif key.endswith("__in"):
-            actual_key = key[:-4]
-            if actual_key in context and context[actual_key] not in value:
-                return False
-        else:
-            if key in context and context[key] != value:
-                return False
-    return True
-
 
 @app.get("/calculator")
 async def get_calculators():
@@ -131,6 +30,12 @@ async def get_calculators():
     for calculator in calculators:
         calculator["_id"] = str(calculator["_id"])
     return calculators
+
+
+@app.post("/calculator")
+async def create_calculator(calculator: models.Calculator):
+    result = db.calculators.insert_one(calculator.dict())
+    return {"_id": str(result.inserted_id)}
 
 
 @app.get("/calculator/{calculator_id}")
@@ -142,32 +47,27 @@ async def get_calculator(calculator_id: str):
     return calculator
 
 
-@app.post("/calculator")
-async def create_calculator(calculator: Calculator):
-    result = db.calculators.insert_one(calculator.dict())
-    return {"_id": str(result.inserted_id)}
-
-
 @app.post("/calculator/{calculator_id}/variable")
-async def create_variable(calculator_id: str, variable: Variable):
-    variable.calculator_id = calculator_id
-    result = db.variables.insert_one(variable.dict())
-    return {"_id": str(result.inserted_id)}
+async def create_variable(calculator_id: str, variables: List[models.Variable]):
+    existing_variables = get_all_variables(calculator_id)
+    all_variables = existing_variables + [v.dict() for v in variables]
+
+    for variable in variables:
+        variable.calculator_id = calculator_id
+        if variable.formula:
+            errors = validate_all_formulas(calculator_id, [models.Variable(**v) for v in all_variables])
+            if errors:
+                error_messages = [f"Error in variable {tag_name}: {error}" for tag_name, error in errors]
+                raise HTTPException(status_code=400, detail="; ".join(error_messages))
+        db.variables.insert_one({**variable.dict(), "calculator_id": calculator_id})
+    return {"message": "Variables added successfully"}
 
 
 @app.post("/calculator/{calculator_id}/price")
-async def create_price(calculator_id: str, price: Price):
+async def create_price(calculator_id: str, price: models.Price):
     price.calculator_id = calculator_id
     result = db.prices.insert_one(price.dict())
     return {"_id": str(result.inserted_id)}
-
-
-@app.delete("/calculator/{calculator_id}")
-async def delete_calculator(calculator_id: str):
-    result = db.calculators.delete_one({"_id": ObjectId(calculator_id)})
-    db.variables.delete_many({"calculator_id": calculator_id})
-    db.prices.delete_many({"calculator_id": calculator_id})
-    return {"deleted_count": result.deleted_count}
 
 
 @app.get("/calculator/{calculator_id}/variable")
@@ -175,8 +75,6 @@ async def get_variables(calculator_id: str):
     variables = list(db.variables.find({"calculator_id": calculator_id}).sort("order", 1))
     for variable in variables:
         variable["_id"] = str(variable["_id"])
-    if not variables:
-        raise HTTPException(status_code=404, detail="Variables not found for the given calculator_id")
     return variables
 
 
@@ -189,27 +87,37 @@ async def get_variable(calculator_id: str, variable_id: str):
 
 
 @app.put("/calculator/{calculator_id}/variable")
-async def update_variables(calculator_id: str, variables: List[Variable]):
+async def update_variables(calculator_id: str, variables: List[models.Variable]):
     db.variables.delete_many({"calculator_id": calculator_id})
     db.variables.insert_many([var.dict() for var in variables])
     return {"message": "Variables updated successfully"}
 
 
-@app.post("/calculator/{calculator_id}/variable")
-async def create_variables(calculator_id: str, variables: List[Variable]):
-    for variable in variables:
-        variable.calculator_id = calculator_id
-    result = db.variables.insert_many([var.dict() for var in variables])
-    return {"inserted_ids": [str(id) for id in result.inserted_ids]}
-
-
 @app.patch("/calculator/{calculator_id}/variable/{variable_id}")
-async def patch_variable(calculator_id: str, variable_id: str, variable: Variable):
-    result = db.variables.update_one({"calculator_id": calculator_id, "_id": ObjectId(variable_id)},
-                                     {"$set": variable.dict()})
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Variable not found")
-    return {"message": "Variable patched successfully"}
+async def update_variable(calculator_id: str, variable_id: str, variable: models.Variable):
+    variable.calculator_id = calculator_id
+
+    existing_variables = get_all_variables(calculator_id)
+    updated_variables = []
+    for v in existing_variables:
+        if str(v["_id"]) == variable_id:
+            updated_variables.append(variable.dict())
+        else:
+            updated_variables.append(v)
+
+    if variable.formula:
+        errors = validate_all_formulas(calculator_id, [models.Variable(**v) for v in updated_variables])
+        if errors:
+            error_messages = [f"Error in variable {tag_name}: {error}" for tag_name, error in errors]
+            raise HTTPException(status_code=400, detail="; ".join(error_messages))
+
+    update_result = db.variables.update_one(
+        {"_id": ObjectId(variable_id)},
+        {"$set": {**variable.dict(), "calculator_id": calculator_id}}
+    )
+    if update_result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Variable not found or no changes detected")
+    return {"message": "Variable updated successfully"}
 
 
 @app.delete("/calculator/{calculator_id}/variable/{variable_id}")
@@ -225,8 +133,6 @@ async def get_prices(calculator_id: str):
     prices = list(db.prices.find({"calculator_id": calculator_id}).sort("order", 1))
     for price in prices:
         price["_id"] = str(price["_id"])
-    if not prices:
-        raise HTTPException(status_code=404, detail="Prices not found for the given calculator_id")
     return prices
 
 
@@ -239,7 +145,7 @@ async def get_price(calculator_id: str, price_id: str):
 
 
 @app.put("/calculator/{calculator_id}/price")
-async def update_prices(calculator_id: str, prices: List[Price]):
+async def update_prices(calculator_id: str, prices: List[models.Price]):
     db.prices.delete_many({"calculator_id": calculator_id})
     for price in prices:
         price.calculator_id = calculator_id
@@ -248,14 +154,14 @@ async def update_prices(calculator_id: str, prices: List[Price]):
 
 
 @app.patch("/calculator/{calculator_id}/price")
-async def patch_prices(calculator_id: str, prices: List[Price]):
+async def patch_prices(calculator_id: str, prices: List[models.Price]):
     for price in prices:
         db.prices.update_one({"calculator_id": calculator_id, "_id": ObjectId(price.id)}, {"$set": price.dict()})
     return {"message": "Prices patched successfully"}
 
 
 @app.patch("/calculator/{calculator_id}/price/{price_id}")
-async def patch_price(calculator_id: str, price_id: str, price: Price):
+async def patch_price(calculator_id: str, price_id: str, price: models.Price):
     result = db.prices.update_one({"calculator_id": calculator_id, "_id": ObjectId(price_id)}, {"$set": price.dict()})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Price not found")
@@ -270,10 +176,39 @@ async def delete_price(calculator_id: str, price_id: str):
     return {"message": "Price deleted successfully"}
 
 
-@app.post("/template/")
-async def create_template(template: Template):
-    result = db.templates.insert_one(template.dict())
+@app.post("/calculator/{calculator_id}/template")
+async def create_template(calculator_id: str, template: models.Template):
+    template_data = template.dict()
+    template_data["calculator_id"] = calculator_id
+    result = db.templates.insert_one(template_data)
     return {"_id": str(result.inserted_id)}
+
+
+@app.get("/calculator/{calculator_id}/template")
+async def get_template(calculator_id: str):
+    template = db.templates.find_one({"calculator_id": calculator_id})
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return template
+
+
+@app.put("/calculator/{calculator_id}/template")
+async def update_template(calculator_id: str, template: models.Template):
+    result = db.templates.update_one(
+        {"calculator_id": calculator_id},
+        {"$set": {"html": template.html}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {"message": "Template updated successfully"}
+
+
+@app.delete("/calculator/{calculator_id}/template")
+async def delete_template(calculator_id: str):
+    result = db.templates.delete_one({"calculator_id": calculator_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {"message": "Template deleted successfully"}
 
 
 @app.post("/calculator/{calculator_id}")

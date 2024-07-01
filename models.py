@@ -1,13 +1,35 @@
+from typing import Optional, Any, Dict
+
 from pydantic import BaseModel
-from typing import List, Dict, Any
 
 
-class Service(BaseModel):
+class Calculator(BaseModel):
     name: str
-    variables: List[str]
-    formula: str
 
 
-class CalculationRequest(BaseModel):
-    service_name: str
-    parameters: Dict[str, Any]
+class Variable(BaseModel):
+    name: str
+    tag_name: str
+    description: Optional[str] = None
+    data_type: str
+    default_value: Any
+    formula: Optional[str] = None
+    widget: Optional[str] = None
+    is_output: bool
+    required: bool
+    order: int
+    calculator_id: Optional[str] = None
+
+
+class Price(BaseModel):
+    description: str
+    tag_name: str
+    price: float
+    extra: Optional[Dict[str, Any]] = None
+    order: int
+    calculator_id: Optional[str] = None
+
+
+class Template(BaseModel):
+    calculator_id: str
+    html: str
