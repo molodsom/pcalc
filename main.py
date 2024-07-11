@@ -65,8 +65,9 @@ async def create_variable(calculator_id: str, variables: List[models.Variable]):
 
 @app.post("/calculator/{calculator_id}/price")
 async def create_price(calculator_id: str, price: models.Price):
-    price.calculator_id = calculator_id
-    result = db.prices.insert_one(price.dict())
+    price_data = price.dict()
+    price_data["calculator_id"] = calculator_id
+    result = db.prices.insert_one(price_data)
     return {"_id": str(result.inserted_id)}
 
 
@@ -111,12 +112,10 @@ async def update_variable(calculator_id: str, variable_id: str, variable: models
             error_messages = [f"Error in variable {tag_name}: {error}" for tag_name, error in errors]
             raise HTTPException(status_code=400, detail="; ".join(error_messages))
 
-    update_result = db.variables.update_one(
+    db.variables.update_one(
         {"_id": ObjectId(variable_id)},
         {"$set": {**variable.dict(), "calculator_id": calculator_id}}
     )
-    if update_result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="Variable not found or no changes detected")
     return {"message": "Variable updated successfully"}
 
 
@@ -220,32 +219,54 @@ async def calculate(calculator_id: str, input_data: Dict[str, Any], as_html: Opt
     variables = list(db.variables.find({"calculator_id": calculator_id}))
     prices = list(db.prices.find({"calculator_id": calculator_id}))
 
-    variables.sort(key=lambda x: x['order'])
-    prices.sort(key=lambda x: x['order'])
+    variables.sort(key=lambda x: x["order"])
+    prices.sort(key=lambda x: x["order"])
 
-    context = input_data.copy()
+    context = {}
 
     for variable in variables:
-        tag_name = variable.get('tag_name', '').lower()
-        formula = variable.get('formula')
-        if variable["widget"] and tag_name not in context:
-            raise HTTPException(status_code=400, detail=f"Missing input for {tag_name}")
-        if formula:
-            context[tag_name] = eval_formula(formula, context, prices)
+        tag_name = variable.get("tag_name", "").lower()
+        default_value = variable.get("default_value", None)
+        widget = variable.get("widget")
+        required = variable.get("required", False)
+        data_type = variable.get("data_type")
+
+        if tag_name in input_data:
+            context[tag_name] = input_data[tag_name]
+        elif default_value is not None and default_value != "":
+            context[tag_name] = default_value
         else:
-            context[tag_name] = input_data.get(tag_name, variable["default_value"])
+            if data_type == "int" or data_type == "float":
+                context[tag_name] = 0
+            elif data_type == "bool":
+                context[tag_name] = False
+            else:
+                context[tag_name] = ""
+
+        if widget == "checkbox":
+            required = False
+
+        if required and (tag_name not in input_data or input_data[tag_name] in [None, "", False]):
+            raise HTTPException(status_code=400, detail=f"Missing required input for {tag_name}")
+
+    for variable in variables:
+        tag_name = variable.get("tag_name", "").lower()
+        formula = variable.get("formula")
+        widget = variable.get("widget")
+        if not widget and formula and formula != "":
+            context[tag_name] = eval_formula(formula, context, prices)
 
     output = []
     for variable in variables:
-        tag_name = variable.get('tag_name', '').lower()
+        tag_name = variable.get("tag_name", "").lower()
         value = context[tag_name]
-        if variable["is_output"] and context[tag_name]:
+        if variable["is_output"] and value is not None:
             if isinstance(value, float) or variable["data_type"] == "float":
-                value = "{0:.2f}".format(np.round(context[tag_name], 2))
+                value = "{0:.2f}".format(np.round(value, 2))
             output.append({
                 "name": variable["name"],
                 "tag_name": tag_name,
-                "value": value
+                "value": str(value)
             })
 
     if as_html:

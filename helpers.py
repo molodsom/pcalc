@@ -48,31 +48,33 @@ def validate_all_formulas(calculator_id: str, variables: List[models.Variable]):
     return errors
 
 
+def get_price(tag_name: str, context: Dict[str, Any], prices: List[Dict[str, Any]], fallback_value=0.0) -> float:
+    value = fallback_value
+    for price in prices:
+        if price['tag_name'] == tag_name:
+            if check_extra_conditions(price.get("extra", {}), context):
+                value = price['price']
+    return value
+
+
 def eval_formula(formula: str, context: Dict[str, Any], prices: List[Dict[str, Any]]) -> Any:
-    local_context = {}
-    formula = formula.replace("if", "np.where")
+    formula = formula.replace("if", "np.where").replace(";", ",")
 
     def price(tag_name: str, fallback_value=0.0):
-        value = fallback_value
-        for price in prices:
-            if price['tag_name'] == tag_name:
-                if check_extra_conditions(price.get("extra", {}), context):
-                    value = price['price']
-        return value
+        return get_price(tag_name, context, prices, fallback_value)
 
     for key, value in context.items():
         pattern = r'\b' + re.escape(key) + r'\b'
-        if value is None:
-            value = 0
         formula = re.sub(pattern, str(value), formula)
 
     try:
         local_context = {"np": np, "price": price}
-        local_context.update(context)
-        # print(f"Evaluating formula: {formula} with context {local_context}")
-        return eval(formula, {}, local_context)
+        result = eval(formula, {}, local_context)
+        if isinstance(result, np.ndarray):
+            result = result.tolist()
+        return result
     except Exception as e:
-        print(f"Error evaluating formula: {formula} with context {local_context} - {e}")
+        print(f"Error evaluating formula: {formula} with context {context} - {e}")
         return None
 
 
