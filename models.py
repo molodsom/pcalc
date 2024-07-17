@@ -32,5 +32,5 @@ class Price(BaseModel):
 
 
 class Template(BaseModel):
-    calculator_id: str
+    calculator_id: Optional[str] = None
     html: str

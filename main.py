@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,10 +12,7 @@ from settings import db
 
 app = FastAPI()
 
-origins = [
-    "http://localhost",
-    "http://localhost:3000",
-]
+origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost,http://localhost:3000").split(",")
 
 app.add_middleware(
     CORSMiddleware,
@@ -177,6 +176,10 @@ async def delete_price(calculator_id: str, price_id: str):
 
 @app.post("/calculator/{calculator_id}/template")
 async def create_template(calculator_id: str, template: models.Template):
+    existing_template = db.templates.find_one({"calculator_id": calculator_id})
+    if existing_template:
+        raise HTTPException(status_code=400, detail="Template already exists for this calculator")
+
     template_data = template.dict()
     template_data["calculator_id"] = calculator_id
     result = db.templates.insert_one(template_data)
@@ -188,7 +191,7 @@ async def get_template(calculator_id: str):
     template = db.templates.find_one({"calculator_id": calculator_id})
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
-    return template
+    return {"_id": str(template["_id"]), "html": template["html"]}
 
 
 @app.put("/calculator/{calculator_id}/template")
