@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional, Any, Dict
 from bson import ObjectId
+from jinja2 import Template
 
 import models
 from helpers import get_all_variables, validate_all_formulas, eval_formula
@@ -277,9 +278,8 @@ async def calculate(calculator_id: str, input_data: Dict[str, Any], as_html: Opt
         template = db.templates.find_one({"calculator_id": calculator_id})
         if not template:
             raise HTTPException(status_code=404, detail="Template not found")
-        html_output = template["html"]
-        for key, value in context.items():
-            html_output = html_output.replace(f"{{{{ {key} }}}}", str(value))
+        jinja_template = Template(template["html"])
+        html_output = jinja_template.render(context)
         return {"html": html_output}
 
     return output
