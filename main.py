@@ -229,15 +229,16 @@ async def calculate(calculator_id: str, input_data: Dict[str, Any], as_html: Opt
 
     for variable in variables:
         tag_name = variable.get("tag_name", "").lower()
-        default_value = variable.get("default_value", None)
+        data_type = variable.get("data_type", int)
+        default_value = variable.get("default_value", eval(data_type)())
         widget = variable.get("widget")
         required = variable.get("required", False)
         data_type = variable.get("data_type")
 
         if tag_name in input_data:
-            context[tag_name] = input_data[tag_name]
+            context[tag_name] = eval(data_type)(input_data[tag_name])
         elif default_value is not None and default_value != "":
-            context[tag_name] = default_value
+            context[tag_name] = eval(data_type)(default_value)
         else:
             if data_type == "int" or data_type == "float":
                 context[tag_name] = 0
