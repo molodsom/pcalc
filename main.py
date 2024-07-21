@@ -9,7 +9,11 @@ from jinja2 import Template
 
 import models
 from helpers import get_all_variables, validate_all_formulas, eval_formula
+from logger import get_logger
 from settings import db
+
+
+logger = get_logger(__name__)
 
 app = FastAPI()
 
