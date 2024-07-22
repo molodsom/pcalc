@@ -250,7 +250,11 @@ async def calculate(calculator_id: str, input_data: Dict[str, Any], as_html: Opt
         data_type = variable.get("data_type")
 
         if tag_name in input_data:
-            context[tag_name] = eval(data_type)(input_data[tag_name])
+            try:
+                context[tag_name] = eval(data_type)(input_data[tag_name])
+            except Exception as e:
+                context[tag_name] = ""
+                logger.error(f"{tag_name}: {e}")
         elif default_value is not None and default_value != "":
             context[tag_name] = eval(data_type)(default_value)
         else:
