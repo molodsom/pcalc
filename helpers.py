@@ -113,3 +113,13 @@ def check_extra_conditions(extra: Dict[str, Any], context: Dict[str, Any]) -> bo
             if key in context and context[key] != value:
                 return False
     return True
+
+
+def format_floats(context):
+    for key, value in context.items():
+        if isinstance(value, float):
+            if value.is_integer():
+                context[key] = int(value)
+            else:
+                context[key] = f"{value:.2f}"
+    return context

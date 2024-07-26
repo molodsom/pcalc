@@ -8,7 +8,7 @@ from bson import ObjectId
 from jinja2 import Template
 
 import models
-from helpers import get_all_variables, validate_all_formulas, eval_formula
+from helpers import get_all_variables, validate_all_formulas, eval_formula, format_floats
 from logger import get_logger
 from settings import db
 
@@ -286,9 +286,10 @@ async def calculate(calculator_id: str, input_data: Dict[str, Any], as_html: Opt
     for variable in variables:
         tag_name = variable.get("tag_name", "").lower()
         value = context[tag_name]
-        if variable["is_output"] and value is not None:
-            if isinstance(value, float) or variable["data_type"] == "float":
-                value = "{0:.2f}".format(np.round(value, 2))
+        if variable["is_output"]:
+            if value is not None:
+                if isinstance(value, float) or variable["data_type"] == "float":
+                    value = "{0:.2f}".format(np.round(value, 2))
             output.append({
                 "name": variable["name"],
                 "tag_name": tag_name,
@@ -301,6 +302,7 @@ async def calculate(calculator_id: str, input_data: Dict[str, Any], as_html: Opt
         if not template:
             raise HTTPException(status_code=404, detail="Template not found")
         jinja_template = Template(template["html"])
+        context = format_floats(context)
         html_output = jinja_template.render(context)
         return {"html": html_output}
 
