@@ -57,7 +57,7 @@ def get_price(tag_name: str, context: Dict[str, Any], prices: List[Dict[str, Any
     return value
 
 
-def eval_formula(formula: str, context: Dict[str, Any], prices: List[Dict[str, Any]]) -> Any:
+def eval_formula(formula: str, context: Dict[str, Any], prices: List[Dict[str, Any]]) -> Dict[str, Any]:
     formula = formula.replace("if", "np.where").replace(";", ",")
 
     def price(tag_name: str, fallback_value=0.0):
@@ -72,10 +72,9 @@ def eval_formula(formula: str, context: Dict[str, Any], prices: List[Dict[str, A
         result = eval(formula, {}, local_context)
         if isinstance(result, np.ndarray):
             result = result.tolist()
-        return result
+        return {"value": result, "error": ""}
     except Exception as e:
-        print(f"Error evaluating formula: {formula} with context {context} - {e}")
-        return None
+        return {"value": None, "error": str(e)}
 
 
 def check_extra_conditions(extra: Dict[str, Any], context: Dict[str, Any]) -> bool:

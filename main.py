@@ -239,6 +239,7 @@ async def calculate(calculator_id: str, input_data: Dict[str, Any], as_html: Opt
     variables.sort(key=lambda x: x["order"])
     prices.sort(key=lambda x: x["order"])
 
+    errors = {}
     context = {}
 
     for variable in variables:
@@ -276,7 +277,10 @@ async def calculate(calculator_id: str, input_data: Dict[str, Any], as_html: Opt
         formula = variable.get("formula")
         widget = variable.get("widget")
         if not widget and formula and formula != "":
-            context[tag_name] = eval_formula(formula, context, prices)
+            result = eval_formula(formula, context, prices)
+            context[tag_name] = result.get("value")
+            if result.get("error"):
+                errors[tag_name] = result["error"]
 
     output = []
     for variable in variables:
@@ -288,7 +292,8 @@ async def calculate(calculator_id: str, input_data: Dict[str, Any], as_html: Opt
             output.append({
                 "name": variable["name"],
                 "tag_name": tag_name,
-                "value": str(value)
+                "value": str(value) if value is not None else None,
+                "error": errors.get(tag_name)
             })
 
     if as_html:
