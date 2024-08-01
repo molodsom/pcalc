@@ -58,14 +58,29 @@ def get_price(tag_name: str, context: Dict[str, Any], prices: List[Dict[str, Any
 
 
 def eval_formula(formula: str, context: Dict[str, Any], prices: List[Dict[str, Any]]) -> Dict[str, Any]:
-    formula = formula.replace("if", "np.where").replace(";", ",")
+    def replace_if_conditions(formula: str) -> str:
+        return re.sub(r'\bif\b', 'np.where', formula).replace(";", ",")
+
+    formula = replace_if_conditions(formula)
 
     def price(tag_name: str, fallback_value=0.0):
         return get_price(tag_name, context, prices, fallback_value)
 
-    for key, value in context.items():
-        pattern = r'\b' + re.escape(key) + r'\b'
-        formula = re.sub(pattern, str(value), formula)
+    def replace_context_vars(match):
+        key = match.group(0)
+        value = context[key]
+        if isinstance(value, str):
+            return f'"{value}"'
+        return str(value)
+
+    tokens = re.split(r'("[^"]*")', formula)
+    for i, token in enumerate(tokens):
+        if not token.startswith('"'):
+            for key in context:
+                pattern = r'\b' + re.escape(key) + r'\b'
+                token = re.sub(pattern, replace_context_vars, token)
+        tokens[i] = token
+    formula = ''.join(tokens)
 
     try:
         local_context = {"np": np, "price": price}
