@@ -11,6 +11,7 @@ class Variable(BaseModel):
     name: str
     tag_name: str
     description: Optional[str] = None
+    placeholder: Optional[str] = None
     data_type: str = 'str'
     default_value: Any = None
     formula: Optional[str] = None
