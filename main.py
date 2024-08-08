@@ -1,21 +1,36 @@
 import os
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Security, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional, Any, Dict
 from bson import ObjectId
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jinja2 import Template
+from starlette import status
 
 import models
 from helpers import get_all_variables, validate_all_formulas, eval_formula, format_floats
 from logger import get_logger
-from settings import db
-
+from settings import db, cfg_token
 
 logger = get_logger(__name__)
 
 app = FastAPI()
+
+security = HTTPBearer()
+
+
+def get_token(credentials: HTTPAuthorizationCredentials = Security(security)):
+    print(cfg_token)
+    if not cfg_token or credentials.scheme != "Bearer" or credentials.credentials != cfg_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing token"
+        )
+
+    return credentials.credentials
+
 
 origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost,http://localhost:3000").split(",")
 
@@ -37,7 +52,7 @@ app.add_middleware(
 )
 
 
-@app.get("/calculator")
+@app.get("/calculator", dependencies=[Depends(get_token)])
 async def get_calculators():
     calculators = list(db.calculators.find())
     for calculator in calculators:
@@ -45,13 +60,13 @@ async def get_calculators():
     return calculators
 
 
-@app.post("/calculator")
+@app.post("/calculator", dependencies=[Depends(get_token)])
 async def create_calculator(calculator: models.Calculator):
     result = db.calculators.insert_one(calculator.dict())
     return {"_id": str(result.inserted_id)}
 
 
-@app.get("/calculator/{calculator_id}")
+@app.get("/calculator/{calculator_id}", dependencies=[Depends(get_token)])
 async def get_calculator(calculator_id: str):
     calculator = db.calculators.find_one({"_id": ObjectId(calculator_id)})
     if not calculator:
@@ -60,7 +75,7 @@ async def get_calculator(calculator_id: str):
     return calculator
 
 
-@app.post("/calculator/{calculator_id}/variable")
+@app.post("/calculator/{calculator_id}/variable", dependencies=[Depends(get_token)])
 async def create_variable(calculator_id: str, variables: List[models.Variable]):
     existing_variables = get_all_variables(calculator_id)
     all_variables = existing_variables + [v.dict() for v in variables]
@@ -76,7 +91,7 @@ async def create_variable(calculator_id: str, variables: List[models.Variable]):
     return {"message": "Variables added successfully"}
 
 
-@app.post("/calculator/{calculator_id}/price")
+@app.post("/calculator/{calculator_id}/price", dependencies=[Depends(get_token)])
 async def create_price(calculator_id: str, price: models.Price):
     price_data = price.dict()
     price_data["calculator_id"] = calculator_id
@@ -92,7 +107,7 @@ async def get_variables(calculator_id: str):
     return variables
 
 
-@app.get("/calculator/{calculator_id}/variable/{variable_id}")
+@app.get("/calculator/{calculator_id}/variable/{variable_id}", dependencies=[Depends(get_token)])
 async def get_variable(calculator_id: str, variable_id: str):
     variable = db.variables.find_one({"calculator_id": calculator_id, "_id": ObjectId(variable_id)})
     if not variable:
@@ -100,14 +115,14 @@ async def get_variable(calculator_id: str, variable_id: str):
     return variable
 
 
-@app.put("/calculator/{calculator_id}/variable")
+@app.put("/calculator/{calculator_id}/variable", dependencies=[Depends(get_token)])
 async def update_variables(calculator_id: str, variables: List[models.Variable]):
     db.variables.delete_many({"calculator_id": calculator_id})
     db.variables.insert_many([var.dict() for var in variables])
     return {"message": "Variables updated successfully"}
 
 
-@app.patch("/calculator/{calculator_id}/variable/{variable_id}")
+@app.patch("/calculator/{calculator_id}/variable/{variable_id}", dependencies=[Depends(get_token)])
 async def update_variable(calculator_id: str, variable_id: str, variable: models.Variable):
     variable.calculator_id = calculator_id
 
@@ -132,7 +147,7 @@ async def update_variable(calculator_id: str, variable_id: str, variable: models
     return {"message": "Variable updated successfully"}
 
 
-@app.delete("/calculator/{calculator_id}/variable/{variable_id}")
+@app.delete("/calculator/{calculator_id}/variable/{variable_id}", dependencies=[Depends(get_token)])
 async def delete_variable(calculator_id: str, variable_id: str):
     result = db.variables.delete_one({"calculator_id": calculator_id, "_id": ObjectId(variable_id)})
     if result.deleted_count == 0:
@@ -140,7 +155,7 @@ async def delete_variable(calculator_id: str, variable_id: str):
     return {"message": "Variable deleted successfully"}
 
 
-@app.get("/calculator/{calculator_id}/price")
+@app.get("/calculator/{calculator_id}/price", dependencies=[Depends(get_token)])
 async def get_prices(calculator_id: str):
     prices = list(db.prices.find({"calculator_id": calculator_id}).sort("order", 1))
     for price in prices:
@@ -148,7 +163,7 @@ async def get_prices(calculator_id: str):
     return prices
 
 
-@app.get("/calculator/{calculator_id}/price/{price_id}")
+@app.get("/calculator/{calculator_id}/price/{price_id}", dependencies=[Depends(get_token)])
 async def get_price(calculator_id: str, price_id: str):
     price = db.prices.find_one({"calculator_id": calculator_id, "_id": ObjectId(price_id)})
     if not price:
@@ -156,7 +171,7 @@ async def get_price(calculator_id: str, price_id: str):
     return price
 
 
-@app.put("/calculator/{calculator_id}/price")
+@app.put("/calculator/{calculator_id}/price", dependencies=[Depends(get_token)])
 async def update_prices(calculator_id: str, prices: List[models.Price]):
     db.prices.delete_many({"calculator_id": calculator_id})
     for price in prices:
@@ -165,14 +180,14 @@ async def update_prices(calculator_id: str, prices: List[models.Price]):
     return {"message": "Prices updated successfully"}
 
 
-@app.patch("/calculator/{calculator_id}/price")
+@app.patch("/calculator/{calculator_id}/price", dependencies=[Depends(get_token)])
 async def patch_prices(calculator_id: str, prices: List[models.Price]):
     for price in prices:
         db.prices.update_one({"calculator_id": calculator_id, "_id": ObjectId(price.id)}, {"$set": price.dict()})
     return {"message": "Prices patched successfully"}
 
 
-@app.patch("/calculator/{calculator_id}/price/{price_id}")
+@app.patch("/calculator/{calculator_id}/price/{price_id}", dependencies=[Depends(get_token)])
 async def patch_price(calculator_id: str, price_id: str, price: models.Price):
     result = db.prices.update_one({"calculator_id": calculator_id, "_id": ObjectId(price_id)}, {"$set": price.dict()})
     if result.matched_count == 0:
@@ -180,7 +195,7 @@ async def patch_price(calculator_id: str, price_id: str, price: models.Price):
     return {"message": "Price patched successfully"}
 
 
-@app.delete("/calculator/{calculator_id}/price/{price_id}")
+@app.delete("/calculator/{calculator_id}/price/{price_id}", dependencies=[Depends(get_token)])
 async def delete_price(calculator_id: str, price_id: str):
     result = db.prices.delete_one({"calculator_id": calculator_id, "_id": ObjectId(price_id)})
     if result.deleted_count == 0:
@@ -188,7 +203,7 @@ async def delete_price(calculator_id: str, price_id: str):
     return {"message": "Price deleted successfully"}
 
 
-@app.post("/calculator/{calculator_id}/template")
+@app.post("/calculator/{calculator_id}/template", dependencies=[Depends(get_token)])
 async def create_template(calculator_id: str, template: models.Template):
     existing_template = db.templates.find_one({"calculator_id": calculator_id})
     if existing_template:
@@ -200,7 +215,7 @@ async def create_template(calculator_id: str, template: models.Template):
     return {"_id": str(result.inserted_id)}
 
 
-@app.get("/calculator/{calculator_id}/template")
+@app.get("/calculator/{calculator_id}/template", dependencies=[Depends(get_token)])
 async def get_template(calculator_id: str):
     template = db.templates.find_one({"calculator_id": calculator_id})
     if not template:
@@ -208,7 +223,7 @@ async def get_template(calculator_id: str):
     return {"_id": str(template["_id"]), "html": template["html"]}
 
 
-@app.put("/calculator/{calculator_id}/template")
+@app.put("/calculator/{calculator_id}/template", dependencies=[Depends(get_token)])
 async def update_template(calculator_id: str, template: models.Template):
     result = db.templates.update_one(
         {"calculator_id": calculator_id},
@@ -219,7 +234,7 @@ async def update_template(calculator_id: str, template: models.Template):
     return {"message": "Template updated successfully"}
 
 
-@app.delete("/calculator/{calculator_id}/template")
+@app.delete("/calculator/{calculator_id}/template", dependencies=[Depends(get_token)])
 async def delete_template(calculator_id: str):
     result = db.templates.delete_one({"calculator_id": calculator_id})
     if result.deleted_count == 0:
